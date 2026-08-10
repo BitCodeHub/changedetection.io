@@ -87,6 +87,29 @@ def _env(name, default):
     return v if v not in (None, "") else default
 
 
+def _ssrf_guard(url):
+    """Refuse URLs that resolve to a private/reserved IP or carry a parser-differential
+    payload — the same SSRF check the core html_requests fetcher applies. Without it,
+    routing a fetch to http://169.254.169.254/ (cloud metadata) or an internal host
+    would leak that host through this fetcher (and, in local mode, from the app host
+    itself). Overridable with ALLOW_IANA_RESTRICTED_ADDRESSES=true, matching the core.
+    Returns an error string if the URL must be refused, else None."""
+    from changedetectionio.strtobool import strtobool
+    if strtobool(os.getenv("ALLOW_IANA_RESTRICTED_ADDRESSES", "false")):
+        return None
+    try:
+        from changedetectionio.validate_url import is_url_private_or_parser_confused
+        if is_url_private_or_parser_confused(url):
+            return ("Refused: this URL resolves to a private/reserved address or contains a "
+                    "parser-differential payload. Set ALLOW_IANA_RESTRICTED_ADDRESSES=true to allow.")
+    except Exception:
+        # If the validator itself is unavailable, fail closed for obviously-internal hosts.
+        low = (url or "").lower()
+        if any(h in low for h in ("169.254.169.254", "localhost", "127.0.0.1", "[::1]", "metadata")):
+            return "Refused: internal/metadata address."
+    return None
+
+
 def _vps_hosts():
     """Return [(ssh_host, remote_python), ...]. An entry may carry an inline
     interpreter override as `host=/path/to/python`; otherwise the default from
@@ -268,6 +291,10 @@ class fetcher(Fetcher):
         if self.browser_steps:
             raise BrowserStepsInUnsupportedFetcher(url=url)
 
+        blocked = _ssrf_guard(url)
+        if blocked:
+            raise PageUnloadable(status_code=None, url=url, message=blocked)
+
         tier = _env("CDIO_STEALTH_TIER", "auto")
         payload = {
             "url": url,
@@ -380,6 +407,10 @@ class fetcher(Fetcher):
            message: human-readable}
         Never trusts a challenge page as success.
         """
+        blocked = _ssrf_guard(url)
+        if blocked:
+            return {"watchable": False, "verdict": "refused", "antibot": None, "status": 0,
+                    "bytes": 0, "tier_used": None, "egress": None, "message": blocked}
         payload = {
             "url": url, "tier": _env("CDIO_STEALTH_TIER", "auto"),
             "timeout": int(timeout), "solve_cf": True,
