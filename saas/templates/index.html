@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Website change monitoring, hosted for you.</h1>
+<p>Track price drops, restocks, content edits and defacement across any page — with
+anti-bot stealth fetching through rotating egress IPs, so the pages that block
+everyone else still get watched.</p>
+
+<div class="plans">
+  {% for id, p in plans.items() %}
+  <div class="card">
+    <h3>{{ p.name }}</h3>
+    <div class="price">{% if p.price_usd == 0 %}Free{% else %}${{ '%.2f'|format(p.price_usd) }}<small>/mo</small>{% endif %}</div>
+    <p>{{ p.description }}</p>
+    <ul>
+      <li>{{ p.max_watches }} watches</li>
+      <li>Checks every {{ (p.min_interval_seconds // 60) }} min</li>
+      <li>{% if p.stealth_fetcher %}✅ Anti-bot stealth fetch{% else %}Standard fetch{% endif %}</li>
+    </ul>
+    {% if account %}
+      <form method="post" action="/subscribe/{{ id }}"><button>Choose {{ p.name }}</button></form>
+    {% else %}
+      <a class="btn" href="/signup">Get started</a>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

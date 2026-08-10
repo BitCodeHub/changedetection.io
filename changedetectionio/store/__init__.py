@@ -41,6 +41,14 @@ from .updates import DatastoreUpdatesMixin
 # Because the server will run as a daemon and wont know the URL for notification links when firing off a notification
 BASE_URL_NOT_SET_TEXT = '("Base URL" not set - see settings - notifications)'
 
+
+class WatchLimitReached(Exception):
+    """Raised when adding a watch would exceed the per-instance MAX_WATCHES quota.
+    Used by the SaaS control plane to enforce a plan's watch allowance."""
+    def __init__(self, limit):
+        self.limit = limit
+        super().__init__(f"Watch limit reached ({limit}). Upgrade your plan to add more.")
+
 dictfilt = lambda x, y: dict([(i, x[i]) for i in x if i in set(y)])
 
 
@@ -681,6 +689,18 @@ class ChangeDetectionStore(DatastoreUpdatesMixin, FileSavingDataStore):
 
         if extras is None:
             extras = {}
+
+        # SaaS quota: cap the number of watches per instance. Set MAX_WATCHES in the
+        # tenant's environment (the control plane sets it from the account's plan).
+        # 0 / unset means unlimited. The temporary add-watch snapshot is exempt so a
+        # user can still preview a URL when at the cap; only real (non-temporary)
+        # watches count toward the limit.
+        max_watches = int(os.getenv('MAX_WATCHES', '0') or '0')
+        if max_watches and not extras.get('is_temporary_add_watch'):
+            active = sum(1 for w in self.__data['watching'].values()
+                         if not w.get('is_temporary_add_watch'))
+            if active >= max_watches:
+                raise WatchLimitReached(limit=max_watches)
 
         # Incase these are copied across, assume it's a reference and deepcopy()
         apply_extras = deepcopy(extras)

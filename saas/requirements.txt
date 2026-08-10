@@ -1,0 +1,7 @@
+# Control-plane dependencies. The tenant instances use the main app's requirements;
+# this is only what the SaaS front door needs.
+flask>=3.1,<4
+gunicorn
+# Optional — only needed when the corresponding backend is enabled:
+stripe>=9.0        # billing (omit to run in local stub mode without Stripe keys)
+docker>=7.0        # provisioner=docker (omit to run in mock mode)

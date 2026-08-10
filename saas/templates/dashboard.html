@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block body %}
+<h1>Your instance</h1>
+
+<div class="card">
+  <table>
+    <tr><td><strong>Account</strong></td><td>{{ account.email }}</td></tr>
+    <tr><td><strong>Plan</strong></td><td>{{ plan.name }}
+        {% if plan.price_usd %}(${{ '%.2f'|format(plan.price_usd) }}/mo){% endif %}
+        — status: {{ sub.status if sub else 'active' }}</td></tr>
+    <tr><td><strong>Watches allowed</strong></td><td>{{ plan.max_watches }}</td></tr>
+    <tr><td><strong>Check interval</strong></td><td>every {{ (plan.min_interval_seconds // 60) }} min</td></tr>
+    <tr><td><strong>Stealth fetch</strong></td><td>{{ '✅ on' if plan.stealth_fetcher else 'off' }}</td></tr>
+    <tr><td><strong>Instance</strong></td><td>
+      {% if tenant and tenant.status == 'running' %}
+        <a class="btn" href="{{ tenant.public_url }}" target="_blank">Open my monitor →</a>
+        <br><small>{{ tenant.public_url }}</small>
+      {% else %}
+        <em>Provisioning… ({{ tenant.status if tenant else 'pending' }})</em>
+      {% endif %}
+    </td></tr>
+  </table>
+</div>
+
+<h2>Change plan</h2>
+<div class="plans">
+  {% for id, p in plans.items() %}
+  <div class="card">
+    <h3>{{ p.name }}</h3>
+    <div class="price">{% if p.price_usd == 0 %}Free{% else %}${{ '%.2f'|format(p.price_usd) }}<small>/mo</small>{% endif %}</div>
+    <p><small>{{ p.max_watches }} watches · {{ (p.min_interval_seconds // 60) }} min · {{ '✅ stealth' if p.stealth_fetcher else 'standard' }}</small></p>
+    <form method="post" action="/subscribe/{{ id }}">
+      <button {% if sub and sub.plan == id %}class="btn secondary" disabled{% endif %}>
+        {% if sub and sub.plan == id %}Current{% else %}Choose {{ p.name }}{% endif %}
+      </button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

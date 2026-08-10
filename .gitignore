@@ -32,3 +32,10 @@ test-memory.log
 
 # Per-test loguru logs written by tests/conftest.py (dirname(__file__)/logs)
 changedetectionio/tests/logs/
+
+# SaaS control plane local state
+saas/.venv/
+saas/*.db
+saas/*.db-wal
+saas/*.db-shm
+saas/__pycache__/

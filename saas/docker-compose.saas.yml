@@ -1,0 +1,80 @@
+# SaaS stack: the control plane + Traefik (per-tenant subdomain routing) + a
+# shared Playwright/Chrome for the browser fetch tier. Tenant instances are NOT
+# listed here — the control plane creates one container per account at runtime on
+# the `cdio_saas` network, and Traefik picks them up by label.
+#
+#   docker compose -f saas/docker-compose.saas.yml up -d
+#
+# Point *.watch.yourdomain.com at this host and set SAAS_DOMAIN accordingly.
+
+networks:
+  cdio_saas:
+    name: cdio_saas
+
+services:
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=cdio_saas
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:-you@example.com}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_le:/letsencrypt
+    networks: [cdio_saas]
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: saas/Dockerfile
+    restart: unless-stopped
+    environment:
+      SAAS_SECRET_KEY: ${SAAS_SECRET_KEY:?set a secret}
+      SAAS_BASE_URL: ${SAAS_BASE_URL:-https://app.watch.example.com}
+      SAAS_DOMAIN: ${SAAS_DOMAIN:-watch.example.com}
+      SAAS_PROVISIONER: docker
+      SAAS_TENANT_IMAGE: ${SAAS_TENANT_IMAGE:-ghcr.io/dgtlmoon/changedetection.io:latest}
+      SAAS_DB_PATH: /data/saas.db
+      PLAYWRIGHT_DRIVER_URL: ws://playwright-chrome:3000
+      # Billing (omit to run stub mode):
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
+      # Stealth fetch fleet inherited by paid tenants:
+      CDIO_STEALTH_MODE: ${CDIO_STEALTH_MODE:-auto}
+      CDIO_STEALTH_VPS_HOSTS: ${CDIO_STEALTH_VPS_HOSTS:-nexa-vps}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - control_plane_data:/data
+      # so tenant containers can ssh to the egress fleet:
+      - ${HOME}/.ssh:/root/.ssh:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.control.rule=Host(`app.${SAAS_DOMAIN:-watch.example.com}`)
+      - traefik.http.routers.control.entrypoints=websecure
+      - traefik.http.routers.control.tls.certresolver=le
+      - traefik.http.services.control.loadbalancer.server.port=8099
+    networks: [cdio_saas]
+
+  playwright-chrome:
+    image: dgtlmoon/sockpuppetbrowser:latest
+    restart: unless-stopped
+    cap_add: [SYS_ADMIN]
+    environment:
+      SCREEN_WIDTH: 1920
+      SCREEN_HEIGHT: 1024
+    networks: [cdio_saas]
+
+volumes:
+  traefik_le:
+  control_plane_data:
