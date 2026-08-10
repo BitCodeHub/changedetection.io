@@ -133,13 +133,22 @@ def build_brief(prev_text, current_text, url="", title="", llm_config=None):
         {"role": "user", "content": user},
     ]
 
+    # max_tokens headroom: gemma pretty-prints fenced JSON, which truncated (and so
+    # failed to parse) at 500 tokens. For Ollama, also force native JSON mode so the
+    # reply is clean JSON with no ``` fences and no leading prose — kept Ollama-only
+    # so an OpenAI/Anthropic-configured tenant (which uses response_format) is
+    # unaffected.
+    kwargs = {"max_tokens": 1200}
+    if "ollama" in (llm_config.model or "").lower():
+        kwargs["extra_body"] = {"format": "json"}
+
     try:
         text, *_ = completion(
             model=llm_config.model,
             messages=messages,
             api_key=getattr(llm_config, "api_key", None),
             api_base=getattr(llm_config, "api_base", None),
-            max_tokens=500,
+            **kwargs,
         )
     except Exception as e:
         logger.warning(f"[rivalore] analyst LLM call failed for {url}: {e}")
