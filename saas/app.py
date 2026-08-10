@@ -8,7 +8,7 @@ the user through to their instance.
 
 Run:  python -m saas.app        (or gunicorn saas.app:app)
 Env:  SAAS_SECRET_KEY, SAAS_BASE_URL, SAAS_DOMAIN, SAAS_PROVISIONER=docker|mock,
-      STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_PRO / STRIPE_PRICE_BUSINESS
+      STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_MONITOR / STRIPE_PRICE_ANALYST
 """
 import hmac
 import os
