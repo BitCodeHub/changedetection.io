@@ -166,3 +166,9 @@ blinker
 pytest-xdist
 
 
+
+# Stealth fetcher (html_scrapling_stealth) — anti-bot fetching via Scrapling/Camoufox.
+# Only required on the APP HOST for CDIO_STEALTH_MODE=local. For the default
+# vps/auto modes, Scrapling only needs to be installed on the VPS egress hosts
+# (the app host just needs ssh). Left commented so the base image stays slim.
+# scrapling>=0.3.14

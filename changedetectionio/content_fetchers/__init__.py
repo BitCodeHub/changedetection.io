@@ -29,6 +29,11 @@ SCREENSHOT_SIZE_STITCH_THRESHOLD = int(os.getenv("SCREENSHOT_CHUNK_HEIGHT", 1000
 # this information is used in the form selections
 from changedetectionio.content_fetchers.requests import fetcher as html_requests
 
+# Stealth fetcher: Scrapling/Camoufox routed through a VPS egress IP (anti-bot).
+# Exposed as a module-level html_ member so available_fetchers() lists it in the
+# fetch-backend dropdown alongside the built-ins.
+from changedetectionio.content_fetchers.scrapling_stealth import fetcher as html_scrapling_stealth
+
 
 import importlib.resources
 XPATH_ELEMENT_JS = importlib.resources.files("changedetectionio.content_fetchers.res").joinpath('xpath_element_scraper.js').read_text(encoding='utf-8')
