@@ -82,13 +82,19 @@ def _provision_docker(account_id, slug, plan_id):
     except Exception:
         client.networks.create(DOCKER_NETWORK, driver="bridge")
 
+    # Entrypoint/TLS are configurable so a dev/staging box (no domain, no ACME) can
+    # route on plain HTTP, while production uses websecure + Let's Encrypt.
+    entrypoint = os.getenv("SAAS_TRAEFIK_ENTRYPOINT", "websecure")
+    certresolver = os.getenv("SAAS_TRAEFIK_CERTRESOLVER", "le")
     labels = {
         "traefik.enable": "true",
         f"traefik.http.routers.{name}.rule": f"Host(`{slug}.{SAAS_DOMAIN}`)",
-        f"traefik.http.routers.{name}.entrypoints": "websecure",
-        f"traefik.http.routers.{name}.tls.certresolver": "le",
+        f"traefik.http.routers.{name}.entrypoints": entrypoint,
         f"traefik.http.services.{name}.loadbalancer.server.port": "5000",
     }
+    # Only attach TLS on a TLS entrypoint with a resolver (production).
+    if entrypoint == "websecure" and certresolver:
+        labels[f"traefik.http.routers.{name}.tls.certresolver"] = certresolver
 
     container = client.containers.run(
         IMAGE,
