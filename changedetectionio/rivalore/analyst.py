@@ -103,6 +103,17 @@ def _format(brief, url):
     return "\n".join(l for l in lines if l is not None)
 
 
+def _cfg(llm_config, key):
+    """Read a field from the LLM config, which the app passes as a dict
+    (get_llm_config returns {'model','api_key','api_base'}) but callers/tests may
+    pass as an object. Support both."""
+    if llm_config is None:
+        return None
+    if isinstance(llm_config, dict):
+        return llm_config.get(key)
+    return getattr(llm_config, key, None)
+
+
 def build_brief(prev_text, current_text, url="", title="", llm_config=None):
     """Produce a business-language brief for a detected change, or None.
 
@@ -111,7 +122,8 @@ def build_brief(prev_text, current_text, url="", title="", llm_config=None):
     """
     if not is_enabled():
         return None
-    if not llm_config or not getattr(llm_config, "model", None):
+    model = _cfg(llm_config, "model")
+    if not model:
         logger.debug("[rivalore] AI agent enabled but no LLM configured — skipping brief")
         return None
     if not (current_text or "").strip():
@@ -139,15 +151,15 @@ def build_brief(prev_text, current_text, url="", title="", llm_config=None):
     # so an OpenAI/Anthropic-configured tenant (which uses response_format) is
     # unaffected.
     kwargs = {"max_tokens": 1200}
-    if "ollama" in (llm_config.model or "").lower():
+    if "ollama" in (model or "").lower():
         kwargs["extra_body"] = {"format": "json"}
 
     try:
         text, *_ = completion(
-            model=llm_config.model,
+            model=model,
             messages=messages,
-            api_key=getattr(llm_config, "api_key", None),
-            api_base=getattr(llm_config, "api_base", None),
+            api_key=_cfg(llm_config, "api_key"),
+            api_base=_cfg(llm_config, "api_base"),
             **kwargs,
         )
     except Exception as e:
