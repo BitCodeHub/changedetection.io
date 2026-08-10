@@ -50,20 +50,40 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_MONITOR: ${STRIPE_PRICE_MONITOR:-}
       STRIPE_PRICE_ANALYST: ${STRIPE_PRICE_ANALYST:-}
-      # Stealth fetch fleet inherited by paid tenants:
-      CDIO_STEALTH_MODE: ${CDIO_STEALTH_MODE:-auto}
-      CDIO_STEALTH_VPS_HOSTS: ${CDIO_STEALTH_VPS_HOSTS:-nexa-vps}
+      # Paid tenants reach the egress fleet through the stealth gateway (which holds
+      # the SSH keys) — NOT by holding keys themselves. The provisioner stamps this
+      # URL onto stealth-tier tenants.
+      CDIO_STEALTH_GATEWAY: http://stealth-gateway:8077
+      CDIO_STEALTH_GATEWAY_TOKEN: ${CDIO_STEALTH_GATEWAY_TOKEN:?set a gateway token}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - control_plane_data:/data
-      # so tenant containers can ssh to the egress fleet:
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # NOTE: no SSH keys mounted here or into tenants — only the gateway holds them.
     labels:
       - traefik.enable=true
       - traefik.http.routers.control.rule=Host(`app.${SAAS_DOMAIN:-watch.example.com}`)
       - traefik.http.routers.control.entrypoints=websecure
       - traefik.http.routers.control.tls.certresolver=le
       - traefik.http.services.control.loadbalancer.server.port=8099
+    networks: [cdio_saas]
+
+  # The ONLY component that holds the fleet SSH keys. Tenants call it over the
+  # internal network; it does the VPS egress fetch on their behalf. Not exposed to
+  # the public internet (no Traefik router) — internal-only.
+  stealth-gateway:
+    build:
+      context: ..
+      dockerfile: saas/Dockerfile.gateway
+      args:
+        BASE: ${SAAS_TENANT_IMAGE:-rivalore/tenant:test}
+    restart: unless-stopped
+    environment:
+      CDIO_STEALTH_VPS_HOSTS: ${CDIO_STEALTH_VPS_HOSTS:-nexa-vps}
+      CDIO_STEALTH_TIER: ${CDIO_STEALTH_TIER:-auto}
+      CDIO_STEALTH_GATEWAY_TOKEN: ${CDIO_STEALTH_GATEWAY_TOKEN:?set a gateway token}
+    volumes:
+      # the fleet keys live ONLY here
+      - ${HOME}/.ssh:/root/.ssh:ro
     networks: [cdio_saas]
 
   playwright-chrome:

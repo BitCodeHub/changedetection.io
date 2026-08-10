@@ -80,11 +80,21 @@ def tenant_env_for_plan(plan_id):
         "MINIMUM_SECONDS_RECHECK_TIME": str(plan["min_interval_seconds"]),
     }
     if plan["stealth_fetcher"]:
-        env.update({
-            "CDIO_STEALTH_MODE": os.getenv("CDIO_STEALTH_MODE", "auto"),
-            "CDIO_STEALTH_VPS_HOSTS": os.getenv("CDIO_STEALTH_VPS_HOSTS", "nexa-vps"),
-            "CDIO_STEALTH_TIER": os.getenv("CDIO_STEALTH_TIER", "auto"),
-        })
+        # Multi-tenant stealth goes through the central gateway (which holds the
+        # fleet SSH keys); the tenant container holds NO keys. If no gateway is
+        # configured (e.g. single-box dev), fall back to direct VPS mode.
+        gateway = os.getenv("CDIO_STEALTH_GATEWAY")
+        if gateway:
+            env["CDIO_STEALTH_GATEWAY"] = gateway
+            token = os.getenv("CDIO_STEALTH_GATEWAY_TOKEN")
+            if token:
+                env["CDIO_STEALTH_GATEWAY_TOKEN"] = token
+        else:
+            env.update({
+                "CDIO_STEALTH_MODE": os.getenv("CDIO_STEALTH_MODE", "auto"),
+                "CDIO_STEALTH_VPS_HOSTS": os.getenv("CDIO_STEALTH_VPS_HOSTS", "nexa-vps"),
+                "CDIO_STEALTH_TIER": os.getenv("CDIO_STEALTH_TIER", "auto"),
+            })
     if plan["ai_agent"]:
         env["RIVALORE_AI_AGENT"] = "1"
     return env

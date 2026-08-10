@@ -1,0 +1,18 @@
+# Stealth gateway image. Built FROM the tenant image so it already has the
+# changedetectionio package (for fleet_fetch / _ssrf_guard) and all its deps; we
+# only add an ssh client (to reach the VPS fleet), the web server, and the saas code.
+#
+#   docker build -f saas/Dockerfile.gateway --build-arg BASE=<tenant-image> -t rivalore/gateway .
+ARG BASE=rivalore/tenant:test
+FROM ${BASE}
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir flask gunicorn
+
+COPY saas /app/saas
+WORKDIR /app
+
+EXPOSE 8077
+CMD ["gunicorn", "-b", "0.0.0.0:8077", "-w", "2", "--timeout", "300", "saas.stealth_gateway:app"]

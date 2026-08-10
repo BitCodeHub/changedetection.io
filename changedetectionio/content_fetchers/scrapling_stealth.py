@@ -39,9 +39,16 @@ Configuration (env):
       changedetection.io overrides this. When set, the auto tier adds a final
       browser+CF-solve-over-proxy attempt.
   CDIO_STEALTH_SSH_OPTS   extra ssh options (default: sane batch/timeout set)
+  CDIO_STEALTH_GATEWAY    URL of a central stealth gateway (default: unset)
+      When set, ALL egress is routed through the gateway over HTTP instead of this
+      process doing SSH directly. This is the MULTI-TENANT design: the gateway holds
+      the fleet SSH keys, tenant containers hold none — a compromised tenant cannot
+      reach the fleet. Overrides mode/hosts on the tenant side. See saas/stealth_gateway.py.
+  CDIO_STEALTH_GATEWAY_TOKEN  shared secret sent as X-Gateway-Token (optional)
 
 Only `local` mode needs Scrapling installed on the app host; `vps`/`auto` need it
-on the VPS (it is) plus SSH key access.
+on the VPS (it is) plus SSH key access — or, in multi-tenant deployments, none of
+that on the tenant: set CDIO_STEALTH_GATEWAY and let the gateway hold the keys.
 
 Prove-before-promise: call fetcher().validate(url) (or run this module as a CLI
 against one or more URLs) to get a structured {watchable, verdict, antibot, ...}
@@ -212,6 +219,57 @@ def _run_local(payload):
     return mod.handle(payload)
 
 
+def _ordered_hosts(url):
+    """Egress hosts as (host, interpreter) tuples, ordered so the same target
+    deterministically prefers one egress IP (warm cookies / consistency) while
+    different targets fan out across the fleet. The rest follow as failover."""
+    hosts = _vps_hosts()
+    if not hosts:
+        raise Exception("CDIO_STEALTH_VPS_HOSTS is empty and mode requires a VPS")
+    h = int(hashlib.md5((url or "").encode("utf-8")).hexdigest(), 16)
+    i = h % len(hosts)
+    return [hosts[i]] + hosts[:i] + hosts[i + 1:]
+
+
+def fleet_fetch(payload, timeout):
+    """Run one fetch across the VPS egress fleet (SSH), first success wins.
+
+    This is the SSH-holding half. It runs where the fleet keys live — the app host
+    in single-tenant mode, or the STEALTH GATEWAY in multi-tenant mode. It is NOT
+    run inside tenant containers: putting the fleet's SSH key in every customer
+    container would make one container compromise a whole-fleet compromise. Tenants
+    reach this over HTTP via the gateway instead (see _run_via_gateway)."""
+    ordered = _ordered_hosts(payload["url"])
+    last_err = None
+    for host, remote_python in ordered:
+        try:
+            resp = _run_via_vps(host, remote_python, payload, timeout)
+            if resp.get("ok"):
+                resp["_egress"] = host
+                return resp
+            last_err = resp.get("error")
+            logger.warning(f"[scrapling_stealth] {host} runner error: {last_err}")
+        except Exception as e:
+            last_err = str(e)
+            logger.warning(f"[scrapling_stealth] {host} failed: {e}")
+    raise Exception(f"all VPS egress hosts failed: {last_err}")
+
+
+def _run_via_gateway(gateway_url, payload, timeout):
+    """POST the fetch to the central stealth gateway, which holds the fleet SSH keys
+    and runs fleet_fetch on the tenant's behalf. The tenant container never sees a
+    key — it only knows the gateway's URL on the internal network."""
+    import urllib.request
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(gateway_url.rstrip("/") + "/fetch", data=data,
+                                 headers={"Content-Type": "application/json"})
+    token = _env("CDIO_STEALTH_GATEWAY_TOKEN", None)
+    if token:
+        req.add_header("X-Gateway-Token", token)
+    with urllib.request.urlopen(req, timeout=max(timeout, 120) + 60) as r:
+        return json.loads(r.read())
+
+
 class fetcher(Fetcher):
     fetcher_description = _l("Stealth (Scrapling/Camoufox via VPS egress — anti-bot)")
 
@@ -234,43 +292,20 @@ class fetcher(Fetcher):
             'style': 'height: 1em;',
         }
 
-    def _ordered_hosts(self, url):
-        """Egress hosts as (host, interpreter) tuples, ordered so the same target
-        deterministically prefers one egress IP (warm cookies / consistency) while
-        different targets fan out across the fleet. The rest follow as failover."""
-        hosts = _vps_hosts()
-        if not hosts:
-            raise Exception("CDIO_STEALTH_VPS_HOSTS is empty and mode requires a VPS")
-        h = int(hashlib.md5((url or "").encode("utf-8")).hexdigest(), 16)
-        i = h % len(hosts)
-        return [hosts[i]] + hosts[:i] + hosts[i + 1:]
-
-    def _try_vps_fleet(self, ordered, payload, timeout):
-        """Try each (host, interpreter) in turn; first success wins, else raise."""
-        last_err = None
-        for host, remote_python in ordered:
-            try:
-                resp = _run_via_vps(host, remote_python, payload, timeout)
-                if resp.get("ok"):
-                    resp["_egress"] = host
-                    return resp
-                last_err = resp.get("error")
-                logger.warning(f"[scrapling_stealth] {host} runner error: {last_err}")
-            except Exception as e:
-                last_err = str(e)
-                logger.warning(f"[scrapling_stealth] {host} failed: {e}")
-        raise Exception(f"all VPS egress hosts failed: {last_err}")
-
     def _execute(self, payload, timeout):
+        # Multi-tenant: if a gateway is configured, ALL egress goes through it. The
+        # tenant holds no SSH keys and does no direct fleet access — the gateway does.
+        gateway = _env("CDIO_STEALTH_GATEWAY", None)
+        if gateway:
+            return _run_via_gateway(gateway, payload, timeout)
+
         mode = _env("CDIO_STEALTH_MODE", "auto")
 
         if mode == "local":
             return _run_local(payload)
 
-        ordered = self._ordered_hosts(payload["url"])
-
         if mode == "vps":
-            return self._try_vps_fleet(ordered, payload, timeout)
+            return fleet_fetch(payload, timeout)
 
         # mode == auto: local first (fast, no SSH), escalate to VPS on block/error.
         try:
@@ -283,7 +318,7 @@ class fetcher(Fetcher):
         except Exception as e:
             logger.info(f"[scrapling_stealth] local fetch unavailable ({e}) — routing to VPS egress")
 
-        return self._try_vps_fleet(ordered, payload, timeout)
+        return fleet_fetch(payload, timeout)
 
     def _run_sync(self, url, timeout, request_headers, request_body, request_method,
                   ignore_status_codes=False, is_binary=False,
