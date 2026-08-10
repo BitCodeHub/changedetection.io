@@ -17,7 +17,7 @@ everyone else still get watched.</p>
       <li>{% if p.stealth_fetcher %}✅ Anti-bot stealth fetch{% else %}Standard fetch{% endif %}</li>
     </ul>
     {% if account %}
-      <form method="post" action="/subscribe/{{ id }}"><button>Choose {{ p.name }}</button></form>
+      <form method="post" action="/subscribe/{{ id }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button>Choose {{ p.name }}</button></form>
     {% else %}
       <a class="btn" href="/signup">Get started</a>
     {% endif %}

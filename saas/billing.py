@@ -98,9 +98,25 @@ def stub_complete(account_id, plan_id):
               period_end=int(time.time()) + 30 * 86400)
 
 
+def assert_config():
+    """Fail fast on a dangerous misconfiguration: a live Stripe key with no webhook
+    secret would mean the webhook — our ONLY source of entitlement — could not be
+    verified, so anyone could POST a forged 'you paid' event. Called at app startup."""
+    if not STUB and not STRIPE_WEBHOOK_SECRET:
+        raise RuntimeError(
+            "STRIPE_WEBHOOK_SECRET must be set whenever STRIPE_SECRET_KEY is set — "
+            "refusing to start with unverifiable webhooks.")
+
+
 def _verify_and_parse(payload, sig_header):
-    if STUB or not STRIPE_WEBHOOK_SECRET:
+    # STUB mode (no Stripe key at all) is the only path that skips verification, and
+    # it is unreachable in production because the /webhooks/stripe route only matters
+    # once a real key is configured. With a real key, verification is MANDATORY —
+    # never fall back to trusting an unsigned payload.
+    if STUB:
         return json.loads(payload)
+    if not STRIPE_WEBHOOK_SECRET:
+        raise RuntimeError("STRIPE_WEBHOOK_SECRET is required to verify webhooks")
     return _stripe().Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
 
 

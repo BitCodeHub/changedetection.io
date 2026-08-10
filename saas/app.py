@@ -10,9 +10,11 @@ Run:  python -m saas.app        (or gunicorn saas.app:app)
 Env:  SAAS_SECRET_KEY, SAAS_BASE_URL, SAAS_DOMAIN, SAAS_PROVISIONER=docker|mock,
       STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_PRO / STRIPE_PRICE_BUSINESS
 """
+import hmac
 import os
 import re
 import secrets
+from urllib.parse import urlparse
 
 from flask import (Flask, request, redirect, url_for, session, render_template,
                    flash, abort, Response)
@@ -23,9 +25,60 @@ from .plans import PLANS, get_plan, DEFAULT_PLAN
 app = Flask(__name__)
 app.secret_key = os.getenv("SAAS_SECRET_KEY", secrets.token_hex(32))
 
+# Session cookie hardening. Secure defaults to on and should only be turned off
+# for local http testing (SAAS_INSECURE_COOKIES=1).
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=not os.getenv("SAAS_INSECURE_COOKIES"),
+)
+
 models.init_db()
+billing.assert_config()   # refuse to start on an unverifiable-webhook misconfig
+
+
+# ── CSRF protection ───────────────────────────────────────────────────────────
+# Every state-changing POST from a browser must carry the session's CSRF token.
+# The Stripe webhook is exempt: it is not a browser form and is authenticated by
+# its Stripe signature instead.
+CSRF_EXEMPT = {"/webhooks/stripe"}
+
+
+def _csrf_token():
+    tok = session.get("_csrf")
+    if not tok:
+        tok = secrets.token_hex(16)
+        session["_csrf"] = tok
+    return tok
+
+
+@app.before_request
+def csrf_protect():
+    if request.method == "POST" and request.path not in CSRF_EXEMPT:
+        sent = request.form.get("_csrf", "")
+        if not sent or not hmac.compare_digest(sent, session.get("_csrf", "")):
+            abort(400, "CSRF token missing or invalid")
+
+
+@app.context_processor
+def inject_csrf():
+    return {"csrf_token": _csrf_token()}
 
 SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def safe_next(target):
+    """Only allow same-site relative redirects. Rejects absolute URLs
+    (scheme/host) and protocol-relative '//host' targets, so `next` can't be used
+    as an open-redirect into a phishing site."""
+    if not target:
+        return None
+    parsed = urlparse(target)
+    if parsed.scheme or parsed.netloc:
+        return None
+    if not target.startswith("/") or target.startswith("//"):
+        return None
+    return target
 
 
 def _slug_for(email, account_id):
@@ -89,7 +142,7 @@ def login():
             flash("Wrong email or password.")
             return redirect(url_for("login"))
         session["account_id"] = acc["id"]
-        return redirect(request.args.get("next") or url_for("dashboard"))
+        return redirect(safe_next(request.args.get("next")) or url_for("dashboard"))
     return render_template("login.html")
 
 
@@ -131,13 +184,19 @@ def subscribe(plan_id):
 
 
 @app.route("/billing/stub-complete")
+@login_required
 def billing_stub_complete():
-    """Local-only success page that mimics Stripe returning from checkout."""
+    """Local-only success page that mimics Stripe returning from checkout.
+
+    Activates ONLY the logged-in account (never a client-supplied account_id), and
+    only for a real paid plan, so even in dev this can't grant someone else a plan."""
     if not billing.STUB:
         abort(404)
-    account_id = request.args.get("account_id")
+    account = current_account()
     plan_id = request.args.get("plan")
-    billing.stub_complete(account_id, plan_id)
+    if plan_id not in PLANS or get_plan(plan_id)["price_usd"] == 0:
+        abort(400)
+    billing.stub_complete(account["id"], plan_id)
     flash(f"(stub) Subscription to {plan_id} activated.")
     return redirect(url_for("dashboard"))
 

@@ -31,6 +31,7 @@
     <div class="price">{% if p.price_usd == 0 %}Free{% else %}${{ '%.2f'|format(p.price_usd) }}<small>/mo</small>{% endif %}</div>
     <p><small>{{ p.max_watches }} watches · {{ (p.min_interval_seconds // 60) }} min · {{ '✅ stealth' if p.stealth_fetcher else 'standard' }}</small></p>
     <form method="post" action="/subscribe/{{ id }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button {% if sub and sub.plan == id %}class="btn secondary" disabled{% endif %}>
         {% if sub and sub.plan == id %}Current{% else %}Choose {{ p.name }}{% endif %}
       </button>

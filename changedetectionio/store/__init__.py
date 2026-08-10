@@ -679,7 +679,7 @@ class ChangeDetectionStore(DatastoreUpdatesMixin, FileSavingDataStore):
         self.__data['watching'][uuid].clear_watch()
         self.__data['watching'][uuid].commit()
 
-    def add_watch(self, url, tag='', extras=None, tag_uuids=None, save_immediately=True, seed_data_dir=None):
+    def add_watch(self, url, tag='', extras=None, tag_uuids=None, save_immediately=True, seed_data_dir=None, is_temporary_preview=False):
         """
         seed_data_dir: optional path to an existing directory (already in the watch's
         on-disk format, e.g. last-screenshot.png + elements.deflate) that becomes this
@@ -691,15 +691,17 @@ class ChangeDetectionStore(DatastoreUpdatesMixin, FileSavingDataStore):
             extras = {}
 
         # SaaS quota: cap the number of watches per instance. Set MAX_WATCHES in the
-        # tenant's environment (the control plane sets it from the account's plan).
-        # 0 / unset means unlimited. The temporary add-watch snapshot is exempt so a
-        # user can still preview a URL when at the cap; only real (non-temporary)
-        # watches count toward the limit.
+        # tenant's environment (the control plane sets it from the account's plan);
+        # 0 / unset means unlimited.
+        #
+        # The exemption is the internal-only `is_temporary_preview` keyword — NEVER a
+        # field read from `extras`. The REST API turns the caller's whole JSON body
+        # into `extras` (see api/Watch.py), so trusting any key inside it would let a
+        # user bypass the cap by sending that key. Strip it defensively too.
+        extras.pop('is_temporary_add_watch', None)
         max_watches = int(os.getenv('MAX_WATCHES', '0') or '0')
-        if max_watches and not extras.get('is_temporary_add_watch'):
-            active = sum(1 for w in self.__data['watching'].values()
-                         if not w.get('is_temporary_add_watch'))
-            if active >= max_watches:
+        if max_watches and not is_temporary_preview:
+            if len(self.__data['watching']) >= max_watches:
                 raise WatchLimitReached(limit=max_watches)
 
         # Incase these are copied across, assume it's a reference and deepcopy()

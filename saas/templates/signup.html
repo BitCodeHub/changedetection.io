@@ -3,6 +3,7 @@
 {% block body %}
 <h1>Create your account</h1>
 <form method="post">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <label>Email<input type="email" name="email" required></label>
   <label>Password (8+ characters)<input type="password" name="password" required></label>
   <button>Create account</button>

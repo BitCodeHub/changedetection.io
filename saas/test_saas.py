@@ -26,8 +26,18 @@ from .app import app                                     # noqa: E402
 def run():
     client = app.test_client()
 
-    # 1) signup
-    r = client.post("/signup", data={"email": "sam@example.com", "password": "hunter2hunter2"},
+    # CSRF is enforced on all browser POSTs; seed a token into the session and send it.
+    TOKEN = "testcsrftoken"
+    with client.session_transaction() as s:
+        s["_csrf"] = TOKEN
+
+    # 0) a POST without the CSRF token must be rejected
+    r = client.post("/signup", data={"email": "x@y.com", "password": "longenough1"})
+    assert r.status_code == 400, f"CSRF-less POST should be 400, got {r.status_code}"
+    print("✓ CSRF: unprotected POST rejected (400)")
+
+    # 1) signup (with token)
+    r = client.post("/signup", data={"email": "sam@example.com", "password": "hunter2hunter2", "_csrf": TOKEN},
                     follow_redirects=True)
     assert r.status_code == 200, r.status_code
     acc = models.get_account_by_email("sam@example.com")
@@ -46,7 +56,7 @@ def run():
     print(f"✓ free env: MAX_WATCHES={env['MAX_WATCHES']}, stealth off")
 
     # 3) upgrade to Pro via the stub checkout (mimics Stripe returning success)
-    r = client.post("/subscribe/pro", follow_redirects=False)
+    r = client.post("/subscribe/pro", data={"_csrf": TOKEN}, follow_redirects=False)
     assert r.status_code in (302, 303), r.status_code
     # stub checkout URL -> follow it to complete "payment"
     loc = r.headers["Location"]
