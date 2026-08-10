@@ -387,6 +387,24 @@ def process_notification(n_object: NotificationContextData, datastore):
         n_object['llm_summary'] = _llm_change_summary or (n_object.get('_llm_result') or {}).get('summary', '')
         n_object['llm_intent'] = n_object.get('_llm_intent', '')
 
+    # Rivalore AI analyst (Analyst tier): turn the raw change into a business brief.
+    # Only runs when {{ai_brief}} is in the template AND the tenant is on the Analyst
+    # tier (RIVALORE_AI_AGENT=1). Never blocks the notification if it fails.
+    if 'ai_brief' in scan_text:
+        try:
+            from changedetectionio.rivalore import analyst as _analyst
+            if _analyst.is_enabled():
+                from changedetectionio.llm.evaluator import get_llm_config
+                n_object['ai_brief'] = _analyst.build_brief(
+                    prev_text=str(n_object.get('prev_snapshot') or ''),
+                    current_text=str(n_object.get('current_snapshot') or ''),
+                    url=n_object.get('watch_url', ''),
+                    title=n_object.get('watch_title', '') or '',
+                    llm_config=get_llm_config(datastore),
+                )
+        except Exception as e:
+            logger.warning(f"[rivalore] analyst brief skipped: {e}")
+
     # Escape diff/snapshot variables before Jinja renders them into an HTML notification.
     # GHSA-q8xq-qg4x-wphg: inscriptis decodes HTML entities when converting text/html
     # pages to snapshot text, so a page that visibly displays "&lt;a href...&gt;" yields

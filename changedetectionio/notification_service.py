@@ -236,6 +236,7 @@ class NotificationContextData(dict):
             'triggered_text': None,
             'llm_summary': None,     # AI plain-English summary of what changed (requires AI intent to be configured)
             'llm_intent': None,      # The intent that was evaluated (watch-level or inherited from tag)
+            'ai_brief': None,        # Rivalore AI analyst business brief (Analyst tier, RIVALORE_AI_AGENT=1)
             'uuid': 'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX',  # Converted to 'watch_uuid' in create_notification_parameters
             'watch_mime_type': None,
             'watch_tag': None,

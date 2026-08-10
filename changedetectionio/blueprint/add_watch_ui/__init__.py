@@ -25,6 +25,34 @@ def construct_blueprint(datastore: ChangeDetectionStore):
             llm_intent_watch_placeholder=LLM_INTENT_WATCH_PLACEHOLDER,
         )
 
+    @add_watch_ui_blueprint.route("/validate", methods=['GET'])
+    @login_optionally_required
+    def add_watch_ui_validate():
+        """Prove-before-promise: run the stealth validator against a URL and report
+        whether we can actually watch it — and if not, exactly which anti-bot wall is
+        in the way — BEFORE the user commits to adding the watch.
+
+        Returns {watchable, verdict, antibot, status, bytes, tier_used, message}.
+        Never blocks on a challenge page being mistaken for content.
+        """
+        url = (request.args.get('url') or '').strip()
+        if not url or not url.lower().startswith(('http://', 'https://')):
+            return jsonify({"watchable": False, "verdict": "error",
+                            "message": "Please enter a valid http(s):// URL."}), 400
+        try:
+            from changedetectionio.content_fetchers.scrapling_stealth import fetcher as stealth_fetcher
+        except Exception as e:
+            return jsonify({"watchable": False, "verdict": "error",
+                            "message": f"Stealth validator unavailable: {e}"}), 501
+        try:
+            result = stealth_fetcher().validate(url)
+        except Exception as e:
+            logger.error(f"Add-watch validate failed for {url}: {e}")
+            result = {"watchable": False, "verdict": "error", "antibot": None,
+                      "status": 0, "bytes": 0, "tier_used": None, "egress": None,
+                      "message": f"Could not check this page: {str(e).splitlines()[0][:160]}"}
+        return jsonify(result)
+
     @add_watch_ui_blueprint.route("/snapshot", methods=['GET'])
     @login_optionally_required
     def add_watch_ui_snapshot():

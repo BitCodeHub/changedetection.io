@@ -68,6 +68,36 @@ $(document).ready(() => {
 
     $go.on('click', fetchSnapshot);
 
+    // Prove-before-promise: ask the stealth validator whether we can reliably watch
+    // this URL, and show the verdict (and which anti-bot wall, if blocked) before the
+    // user commits to adding it.
+    const $check = $('#add-watch-check');
+    const $watchable = $('#add-watch-watchable');
+    function checkWatchable() {
+        const url = ($url.val() || '').trim();
+        if (!url) { $url.focus(); return; }
+        $check.prop('disabled', true);
+        $watchable.show()
+            .css({background: '#eef2ff', color: '#333', border: '1px solid #c7d2fe'})
+            .text('Checking whether this page is watchable…');
+        $.ajax({url: add_watch_validate_url, data: {url: url}, dataType: 'json'})
+            .done((d) => {
+                const good = !!d.watchable;
+                $watchable.css({
+                    background: good ? '#ecfdf5' : '#fef2f2',
+                    color: good ? '#065f46' : '#991b1b',
+                    border: '1px solid ' + (good ? '#a7f3d0' : '#fecaca')
+                }).text(d.message || (good ? 'Watchable.' : 'This page could not be verified.'));
+            })
+            .fail((xhr) => {
+                let m = 'Could not check this page.';
+                try { m = (JSON.parse(xhr.responseText).message) || m; } catch (e) {}
+                $watchable.css({background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca'}).text(m);
+            })
+            .always(() => $check.prop('disabled', false));
+    }
+    $check.on('click', checkWatchable);
+
     // Enter in the URL box should fetch a preview, not submit the whole form
     $url.on('keydown', (e) => {
         if (e.key === 'Enter') {

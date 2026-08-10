@@ -17,7 +17,10 @@
             <div id="add-watch-url-row">
                 {{ render_nolabel_field(form.url, placeholder="https://...", required=true, class="pure-input-1") }}
                 <button type="button" id="add-watch-go" class="pure-button pure-button-primary">{{ _('Go') }}</button>
+                <button type="button" id="add-watch-check" class="pure-button" title="{{ _('Check whether we can reliably watch this page before adding it') }}">{{ _('Check if watchable') }}</button>
             </div>
+            <!-- Prove-before-promise: shows the stealth validator verdict for this URL -->
+            <div id="add-watch-watchable" style="display:none; margin:0.4em 0; padding:0.5em 0.8em; border-radius:6px;"></div>
 
             <div id="add-watch-panes">
 
@@ -90,6 +93,7 @@
 
 <script>
     const add_watch_snapshot_url = "{{ url_for('add_watch_ui.add_watch_ui_snapshot') }}";
+    const add_watch_validate_url = "{{ url_for('add_watch_ui.add_watch_ui_validate') }}";
 </script>
 <script src="{{url_for('static_content', group='js', filename='plugins.js')}}"></script>
 <script src="{{url_for('static_content', group='js', filename='visual-selector.js')}}"></script>
