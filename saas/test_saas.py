@@ -55,8 +55,8 @@ def run():
     assert "CDIO_STEALTH_MODE" not in env, "free should not get stealth"
     print(f"✓ free env: MAX_WATCHES={env['MAX_WATCHES']}, stealth off")
 
-    # 3) upgrade to Pro via the stub checkout (mimics Stripe returning success)
-    r = client.post("/subscribe/pro", data={"_csrf": TOKEN}, follow_redirects=False)
+    # 3) upgrade to the AI Analyst tier via the stub checkout (mimics Stripe success)
+    r = client.post("/subscribe/analyst", data={"_csrf": TOKEN}, follow_redirects=False)
     assert r.status_code in (302, 303), r.status_code
     # stub checkout URL -> follow it to complete "payment"
     loc = r.headers["Location"]
@@ -65,16 +65,22 @@ def run():
                    follow_redirects=True)
     assert r.status_code == 200
     sub = models.get_subscription(acc["id"])
-    assert sub["plan"] == "pro" and sub["status"] == "active", sub
+    assert sub["plan"] == "analyst" and sub["status"] == "active", sub
     tenant = models.get_tenant(acc["id"])
     assert tenant["status"] == "running", tenant
-    print(f"✓ upgrade: plan=pro active, tenant re-provisioned ({tenant['container_id']})")
+    print(f"✓ upgrade: plan=analyst active, tenant re-provisioned ({tenant['container_id']})")
 
-    # 4) Pro quota env now includes stealth + higher cap
-    penv = tenant_env_for_plan("pro")
-    assert penv["MAX_WATCHES"] == "500", penv
-    assert penv.get("CDIO_STEALTH_MODE"), "pro should enable stealth"
-    print(f"✓ pro env: MAX_WATCHES={penv['MAX_WATCHES']}, stealth={penv['CDIO_STEALTH_MODE']}")
+    # 4) Analyst env: higher cap + stealth + the AI agent flag
+    penv = tenant_env_for_plan("analyst")
+    assert penv["MAX_WATCHES"] == "1000", penv
+    assert penv.get("CDIO_STEALTH_MODE"), "analyst should enable stealth"
+    assert penv.get("RIVALORE_AI_AGENT") == "1", "analyst should enable the AI agent"
+    print(f"✓ analyst env: MAX_WATCHES={penv['MAX_WATCHES']}, stealth={penv['CDIO_STEALTH_MODE']}, ai_agent=on")
+
+    # 4b) Monitor tier: stealth but NO AI agent (the non-AI paid product)
+    menv = tenant_env_for_plan("monitor")
+    assert menv.get("CDIO_STEALTH_MODE") and "RIVALORE_AI_AGENT" not in menv, menv
+    print(f"✓ monitor env: stealth on, ai_agent off (non-AI product)")
 
     # 5) Stripe webhook: subscription canceled -> downgrade to free
     # (re-fetch: the Stripe customer id was assigned during the upgrade above)

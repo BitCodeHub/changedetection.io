@@ -1,11 +1,11 @@
-# SaaS stack: the control plane + Traefik (per-tenant subdomain routing) + a
-# shared Playwright/Chrome for the browser fetch tier. Tenant instances are NOT
+# Rivalore SaaS stack: the control plane + Traefik (per-tenant subdomain routing)
+# + a shared Playwright/Chrome for the browser fetch tier. Tenant instances are NOT
 # listed here — the control plane creates one container per account at runtime on
 # the `cdio_saas` network, and Traefik picks them up by label.
 #
 #   docker compose -f saas/docker-compose.saas.yml up -d
 #
-# Point *.watch.yourdomain.com at this host and set SAAS_DOMAIN accordingly.
+# Point *.<SAAS_DOMAIN> (e.g. *.app.rivalore.ai) at this host and set SAAS_DOMAIN.
 
 networks:
   cdio_saas:
@@ -48,8 +48,8 @@ services:
       # Billing (omit to run stub mode):
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
-      STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
+      STRIPE_PRICE_MONITOR: ${STRIPE_PRICE_MONITOR:-}
+      STRIPE_PRICE_ANALYST: ${STRIPE_PRICE_ANALYST:-}
       # Stealth fetch fleet inherited by paid tenants:
       CDIO_STEALTH_MODE: ${CDIO_STEALTH_MODE:-auto}
       CDIO_STEALTH_VPS_HOSTS: ${CDIO_STEALTH_VPS_HOSTS:-nexa-vps}

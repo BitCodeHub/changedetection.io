@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block body %}
-<h1>Website change monitoring, hosted for you.</h1>
-<p>Track price drops, restocks, content edits and defacement across any page — with
-anti-bot stealth fetching through rotating egress IPs, so the pages that block
-everyone else still get watched.</p>
+<h1>Know what your competitors change — the moment they change it.</h1>
+<p>Rivalore watches your rivals' pricing, product and messaging pages and tells you
+when anything moves. Anti-bot stealth fetching through rotating IPs reaches the
+pages that block everyone else — and on the <strong>Analyst</strong> plan an AI agent
+reads every change and briefs you on what it means for your business.</p>
 
 <div class="plans">
   {% for id, p in plans.items() %}
@@ -12,9 +13,10 @@ everyone else still get watched.</p>
     <div class="price">{% if p.price_usd == 0 %}Free{% else %}${{ '%.2f'|format(p.price_usd) }}<small>/mo</small>{% endif %}</div>
     <p>{{ p.description }}</p>
     <ul>
-      <li>{{ p.max_watches }} watches</li>
+      <li>{{ p.max_watches }} competitor pages</li>
       <li>Checks every {{ (p.min_interval_seconds // 60) }} min</li>
-      <li>{% if p.stealth_fetcher %}✅ Anti-bot stealth fetch{% else %}Standard fetch{% endif %}</li>
+      <li>{% if p.stealth_fetcher %}✅ Anti-bot stealth reach{% else %}Standard fetch{% endif %}</li>
+      <li>{% if p.ai_agent %}🤖 AI analyst briefings{% else %}Change alerts{% endif %}</li>
     </ul>
     {% if account %}
       <form method="post" action="/subscribe/{{ id }}"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button>Choose {{ p.name }}</button></form>
