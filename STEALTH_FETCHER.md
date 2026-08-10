@@ -64,6 +64,28 @@ The runner auto-deploys to each VPS on first use (one ssh connection, idempotent
 process). Nothing to install by hand beyond Scrapling being importable by the
 configured interpreter on each host.
 
+## Reliability: how we can honestly claim a page is "watched"
+
+Anti-bot fetching is an arms race, so the fetcher never pretends a challenge page is
+content. Two mechanisms make a watchability claim truthful:
+
+- **Named block detection.** Every response is classified — `ok` / `challenge` /
+  `empty` / `http_error` — and a challenge is attributed to the wall behind it
+  (Cloudflare, DataDome, PerimeterX, Akamai, Imperva). See `_classify` in the runner.
+- **Never false silence.** With `CDIO_STEALTH_STRICT=1` (default) a challenge/empty
+  result raises `PageUnloadable` instead of being returned, so the watch shows an
+  explicit "access lost" error rather than silently diffing a challenge page and
+  reporting "no change" while we're actually locked out.
+- **Prove-before-promise.** `fetcher().validate(url)` returns a structured verdict
+  (watchable? which wall? how many bytes? which tier/egress?) so the add-watch flow
+  can confirm a page is watchable *before* telling a customer we're monitoring it.
+  The same call, run across a target list, measures real per-category success rates.
+
+Honest scope with datacenter VPS IPs: JS-rendered pages, Cloudflare JS-challenge,
+and rate-limited/geo pages are reliable. DataDome/PerimeterX/Akamai flag datacenter
+IPs and are **best-effort** until you set `CDIO_STEALTH_RESIDENTIAL_PROXY` — the
+validator says exactly which target needs that.
+
 ## Notes / guardrails
 
 - **SSH rate-limiting:** opening many ssh connections in a short burst can trip a

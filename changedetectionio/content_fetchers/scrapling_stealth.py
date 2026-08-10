@@ -28,10 +28,25 @@ Configuration (env):
       static  — curl_cffi with browser TLS, no browser (fast, cheap).
       stealth — full Camoufox browser.
       auto    — static, escalate to browser, then browser + CF-solve on a block.
+  CDIO_STEALTH_STRICT     1 | 0                       (default: 1)
+      1 — a detected anti-bot challenge is NOT returned as content; the fetch
+          raises PageUnloadable so the watch shows an explicit "access lost" error
+          instead of silently diffing a challenge page ("never false silence").
+      0 — return whatever came back (legacy behaviour).
+  CDIO_STEALTH_RESIDENTIAL_PROXY  proxy URL (default: unset)
+      A residential/mobile proxy (http://user:pass@host:port) for the hardest walls
+      (DataDome/PerimeterX/Akamai flag datacenter IPs). A per-watch proxy set in
+      changedetection.io overrides this. When set, the auto tier adds a final
+      browser+CF-solve-over-proxy attempt.
   CDIO_STEALTH_SSH_OPTS   extra ssh options (default: sane batch/timeout set)
 
 Only `local` mode needs Scrapling installed on the app host; `vps`/`auto` need it
 on the VPS (it is) plus SSH key access.
+
+Prove-before-promise: call fetcher().validate(url) (or run this module as a CLI
+against one or more URLs) to get a structured {watchable, verdict, antibot, ...}
+verdict without raising — used by the add-watch flow to tell a customer up front
+whether a page is watchable and, if not, exactly which wall is in the way.
 """
 import asyncio
 import hashlib
@@ -46,7 +61,7 @@ from loguru import logger
 
 from changedetectionio.content_fetchers.base import Fetcher
 from changedetectionio.content_fetchers.exceptions import (
-    BrowserStepsInUnsupportedFetcher, EmptyReply, Non200ErrorCodeReceived,
+    BrowserStepsInUnsupportedFetcher, EmptyReply, Non200ErrorCodeReceived, PageUnloadable,
 )
 
 # Path to the egress-side runner, co-located with this module. Deployed to each
@@ -237,12 +252,11 @@ class fetcher(Fetcher):
         # mode == auto: local first (fast, no SSH), escalate to VPS on block/error.
         try:
             resp = _run_local({**payload, "tier": "static"})
-            status = int(resp.get("status") or 0)
-            blocked = (not resp.get("ok")) or status in (403, 429, 503) or not resp.get("html")
-            if not blocked:
+            if resp.get("ok"):     # verdict == 'ok': real content, no challenge/empty
                 resp["_egress"] = "local"
                 return resp
-            logger.info(f"[scrapling_stealth] local static blocked (status {status}) — escalating to VPS egress")
+            logger.info(f"[scrapling_stealth] local static verdict={resp.get('verdict')} "
+                        f"({resp.get('antibot')}) — escalating to VPS egress")
         except Exception as e:
             logger.info(f"[scrapling_stealth] local fetch unavailable ({e}) — routing to VPS egress")
 
@@ -264,17 +278,41 @@ class fetcher(Fetcher):
             "body": request_body,
             "solve_cf": True,       # allow the runner to solve a challenge when it escalates
             "ignore_status": ignore_status_codes,
+            # Residential proxy for datacenter-IP-flagging walls (DataDome/PerimeterX).
+            # Per-watch proxy from changedetection.io wins; else the fleet-wide default.
+            "proxy": self.proxy_override or _env("CDIO_STEALTH_RESIDENTIAL_PROXY", None),
         }
 
         resp = self._execute(payload, int(timeout or 60))
-        if not resp.get("ok"):
-            raise Exception(resp.get("error") or "stealth fetch failed")
+
+        verdict = resp.get("verdict")
+        antibot = resp.get("antibot")
+
+        # NEVER FALSE SILENCE: a challenge/blocked page is not content. Returning it
+        # would make changedetection.io diff the challenge HTML and later report "no
+        # change" while we're actually locked out. Raise instead, so the watch shows
+        # an explicit error state ("access lost") the customer can see and act on.
+        # Strict mode is on by default; set CDIO_STEALTH_STRICT=0 to return anyway.
+        strict = _env("CDIO_STEALTH_STRICT", "1") != "0"
+        if verdict == "challenge" and strict:
+            wall = f"{antibot} " if antibot and antibot != "unknown" else ""
+            raise PageUnloadable(
+                status_code=resp.get("status"),
+                url=url,
+                message=(f"Access blocked by a {wall}anti-bot wall — the page could not be "
+                         f"retrieved as real content. Monitoring is paused until access returns."),
+            )
+
+        if not resp.get("ok") and not (empty_pages_are_a_change and verdict == "empty"):
+            if verdict == "empty":
+                raise EmptyReply(url=url, status_code=resp.get("status"))
+            raise Exception(resp.get("error") or f"stealth fetch failed (verdict={verdict})")
 
         self.status_code = int(resp.get("status") or 0)
         self.headers = resp.get("headers") or {}
         html = resp.get("html") or ""
         logger.debug(f"[scrapling_stealth] {url} -> {self.status_code} via {resp.get('_egress')} "
-                     f"(tier {resp.get('tier_used')}, {len(html)} bytes)")
+                     f"(tier {resp.get('tier_used')}, verdict {verdict}, {len(html)} bytes)")
 
         if not html:
             if not empty_pages_are_a_change:
@@ -331,6 +369,67 @@ class fetcher(Fetcher):
             return importlib.util.find_spec("scrapling") is not None
         return bool(_vps_hosts())
 
+    def validate(self, url, timeout=90):
+        """Prove-before-promise: fetch `url` through the full pipeline and return a
+        structured verdict WITHOUT raising, so the add-watch flow can tell a customer
+        up front whether we can actually watch this page — and if not, exactly why.
+
+        Returns a dict:
+          {watchable: bool, verdict: ok|challenge|empty|http_error|error,
+           antibot: cloudflare|datadome|..|None, status, bytes, tier_used, egress,
+           message: human-readable}
+        Never trusts a challenge page as success.
+        """
+        payload = {
+            "url": url, "tier": _env("CDIO_STEALTH_TIER", "auto"),
+            "timeout": int(timeout), "solve_cf": True,
+            "proxy": self.proxy_override or _env("CDIO_STEALTH_RESIDENTIAL_PROXY", None),
+        }
+        try:
+            resp = self._execute(payload, int(timeout))
+        except Exception as e:
+            return {"watchable": False, "verdict": "error", "antibot": None, "status": 0,
+                    "bytes": 0, "tier_used": None, "egress": None,
+                    "message": f"Could not reach the page: {str(e)[:160]}"}
+
+        verdict = resp.get("verdict")
+        antibot = resp.get("antibot")
+        html_len = len(resp.get("html") or "")
+        if verdict == "ok":
+            msg = f"✅ Watchable — retrieved {html_len:,} bytes via {resp.get('tier_used')}."
+        elif verdict == "challenge":
+            wall = antibot if antibot and antibot != "unknown" else "an anti-bot"
+            hard = antibot in ("datadome", "perimeterx", "akamai", "imperva")
+            msg = (f"⚠️ Blocked by {wall}. "
+                   + ("This wall flags datacenter IPs — a residential proxy is required to watch it reliably."
+                      if hard else "We can usually solve this; retrying on a schedule may clear it."))
+        elif verdict == "empty":
+            msg = "⚠️ The page returned almost no content — likely a JS shell we couldn't render or a soft block."
+        else:
+            msg = f"⚠️ HTTP {resp.get('status')} — the page did not return usable content."
+        return {
+            "watchable": verdict == "ok", "verdict": verdict, "antibot": antibot,
+            "status": resp.get("status"), "bytes": html_len,
+            "tier_used": resp.get("tier_used"), "egress": resp.get("_egress"),
+            "message": msg,
+        }
+
+
+def _cli():
+    """Ad-hoc reachability probe:  python -m ...scrapling_stealth <url> [url2 ...]
+    Prints the per-URL verdict — the same 'can we watch this?' check the add-watch
+    flow uses, handy for measuring success rates across a target list."""
+    import sys
+    urls = sys.argv[1:]
+    if not urls:
+        print("usage: python -m changedetectionio.content_fetchers.scrapling_stealth <url> [...]")
+        return
+    f = fetcher()
+    for u in urls:
+        v = f.validate(u)
+        print(f"{u}\n  {v['message']}  [verdict={v['verdict']} antibot={v['antibot']} "
+              f"tier={v['tier_used']} egress={v['egress']}]")
+
 
 class ScraplingStealthFetcherPlugin:
     """Registers the stealth fetcher via the changedetection.io pluggy hook."""
@@ -340,3 +439,7 @@ class ScraplingStealthFetcherPlugin:
 
 
 scrapling_stealth_plugin = ScraplingStealthFetcherPlugin()
+
+
+if __name__ == "__main__":
+    _cli()
