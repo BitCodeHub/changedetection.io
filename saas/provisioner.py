@@ -45,6 +45,15 @@ def _tenant_env(account_id, plan_id):
     env["BASE_URL"] = _public_url(models.get_tenant(account_id)["slug"])
     if PLAYWRIGHT_URL:
         env["PLAYWRIGHT_DRIVER_URL"] = PLAYWRIGHT_URL
+    # Propagate operator-level config from the control plane's environment to every
+    # tenant: the LLM the AI analyst uses, and the stealth gateway credentials.
+    # Without the LLM vars an Analyst tenant has the agent flag but nowhere to think.
+    for key in ("LLM_MODEL", "LLM_API_KEY", "LLM_API_BASE", "LLM_TIMEOUT",
+                "LLM_LOCAL_TIMEOUT", "CDIO_STEALTH_GATEWAY", "CDIO_STEALTH_GATEWAY_TOKEN",
+                "ALLOW_IANA_RESTRICTED_ADDRESSES"):
+        val = os.getenv(key)
+        if val is not None and key not in env:
+            env[key] = val
     return env
 
 
@@ -104,6 +113,9 @@ def _provision_docker(account_id, slug, plan_id):
         environment=env,
         volumes={_volume_name(slug): {"bind": "/datastore", "mode": "rw"}},
         network=DOCKER_NETWORK,
+        # Let a tenant resolve the Docker host (for host-run services like a local
+        # LLM endpoint). Harmless in cloud where nothing points at it.
+        extra_hosts={"host.docker.internal": "host-gateway"},
         labels=labels,
     )
     return {
